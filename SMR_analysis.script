@@ -1,0 +1,134 @@
+#####TWAS-SMR Analysis for Matrix eQTL Summary Data#######
+smr_software=/working/lab_nickm/dulariJ/Software/smr_Linux_v1.02/smr_Linux
+eQTL_dir=/working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/summary_eQTL
+
+1.currently all summary eqtl are in matrix eqtl format and we need to convert them into besd format
+1.1.matrixeqtl format
+SNP    gene    beta    t-stat  p-value FDR
+rs13258200    ENSG00000071894.10  -1.00783189089702   -16.641554315712    2.3556801409867e-24 1.12905157909337e-18
+rs6599528    ENSG00000071894.10  -1.06253739134798   -15.8412867110849   2.73027622294589e-23    5.51886367106636e-18
+#since I got bit different colnames and format I adjusted it for each chromosome separately. Repeat it for all chromosomes
+for chr in {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}
+do
+awk '{print $1,$2,$6,$3,$4,$5}' OFS="\t" /working/joint_projects/Prostate_Cancer/eQTL_analysis/mir_eQTLs/chr${chr}_quantification_novel_mirnas_rpm_norm_eqtl_cis  > /working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/summary_eQTL/chr${chr}.txt
+done
+head -n 1 chr1.txt> header.txt
+nano header.txt
+for chr in {2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}
+do
+tail -n +2 chr${chr}.txt >> header${chr}.txt|mv header${chr}.txt mateQTL_chr${chr}.txt
+done
+rm chr3.txt
+###########################################################################################
+2. generate besd files from Matrix eQTL output
+for chr in {1,5,6,8,10,11,15,19}
+do
+${smr_software} --eqtl-summary ${eQTL_dir}/updated_mateQTL_chr${chr}.txt --matrix-eqtl-format --make-besd --out /working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/SMR_format/besd_chr${chr} #generating besd formatted files from matrix eqtl summary output
+done
+there were files with duplicates records. I removed duplicate lines based on SNP ID
+for chr in {1,5,6,8,10,11,15,19}
+do
+awk '!a[$1]++' mateQTL_chr${chr}.txt > updated_mateQTL_chr${chr}.txt
+done
+Then used the output for creating besd formatted files
+#${smr_software} --eqtl-summary ${eQTL_dir}/chr2.txt --matrix-eqtl-format --make-besd --out ${eQTL_dir}/SMR_format/besd_chr2 #generating besd formatted files from matrix eqtl summary output
+###########################################################################################
+3. Use TCGA bim files to update .esi files
+bring TCGA_updated bim files to update information of .esi files
+cd /working/joint_projects/Prostate_Cancer
+cp QC_final_prca_tcga_germline_min_clean2-updated-chr*.bim /working/lab_nickm/dulariJ/SMR/original_esi/
+##format of esiting bim files
+1       rs3094315       0       752566  G       A
+1       rs2286139       0       761732  C       T
+1       rs2980319       0       777122  A       T
+
+##this the format we required
+1    1:744055  0   744055  A   G   0.23
+1    1:765522  0   765522  C   G   0.06
+1    1:995669  0   995669  T   C   0.11
+
+#created .esi files as we want in our analysis
+for chr in {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}
+do
+awk '{print $1 OFS $1":"$4 OFS $3,$4,$5,$6}' OFS="\t" /working/lab_nickm/dulariJ/TWAS_FUSION/BED_Files/chr${chr}.bim > /working/lab_nickm/dulariJ/SMR/original_esi/original_chr${chr}.esi
+done
+
+####################Merge original_chr1.esi with generated .esi from SMR software ##########################################
+df_SMR1<-data.table::fread("/working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/SMR_format/besd_chr1.esi",header = FALSE) #.esi file generated from SMR software
+df_bim1<-data.table::fread("/working/lab_nickm/dulariJ/SMR/original_esi/original_chr1.esi",header = FALSE) #.esi file created from original bim files
+df_chr1<-left_join(df_SMR1[,c("V2")],df_bim1,by=c("V2","V2")) #join two files using "left_join" option
+df_chr1.esi<-df_chr1 %>% distinct(V2, .keep_all=TRUE) #remove repetitions and number of rows should be equal with number of rows in besd_chr1.esi file
+
+Now, export file from R
+write.table(df_chr1.esi, file = "df_chr.esi", sep = "\t", row.names = FALSE, col.names = FALSE,quote = FALSE) #here "quote=FALSE" remove quotes in chracter variables
+need to re-order data frame which was exported from R as requires in .esi format by SMR/HEIDI method
+
+#############################################################################################
+4. Update .epi file using gene start and end position details avaialble in /desktop/Desktop/summary eQTL/epi files/local_gene_locations_mis-iso
+
+4.1 separate genes for each chromosome separately
+4.2 select only known miRNAs (start with "hsa-") #used pivot table
+4.3 use left_join function for besd_chr1.epi and filtred dataset from step 4.2 and 4.3
+df_SMR_epi1<-data.table::fread("/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr1.epi",header = FALSE) #.esi file generated from SMR software
+df_original_epi1<-data.table::fread("/working/lab_nickm/dulariJ/SMR/original_epi/original_chr1.epi",header = FALSE) #.esi file created from original bim files
+df_chr1_epi<-left_join(df_SMR_epi1[,c("V2")],df_original_epi1,by=c("V2","V2")) #join two files using "left_join" option
+df_chr1.epi<-df_chr1 %>% distinct(V2, .keep_all=TRUE)
+
+5. We had to edit LDREF because the difference of SMP IDs ##Keep original .bim file with different name (1000G.EUR.${n}.bim_original)
+for n in {3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}
+do
+mv 1000G.EUR.${n}.bim 1000G.EUR.${n}.bim_original 
+awk '{print $1 OFS $1":"$4 OFS $3,$4,$5,$6}' OFS="\t" 1000G.EUR.${n}.bim_original > 1000G.EUR.${n}.bim
+done
+
+#Run SMR/HEIDI
+for chr in {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}
+do
+${smr_software} --bfile /working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.${chr} --gwas-summary /working/lab_nickm/dulariJ/SMR/GWAS/mygwas.ma --beqtl-summary /working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/SMR_format/besd_chr${chr} --peqtl-smr 0.02 --peqtl-heidi 0.02--out /working/lab_nickm/dulariJ/SMR/SMR_quan_cis_novel/Output/mysmr_chr${chr} --thread-num 1
+#Run only SMR (--heidi-off) 
+${smr_software} --bfile /working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.${chr}  --gwas-summary /working/lab_nickm/dulariJ/SMR/GWAS/mygwas.ma --beqtl-summary /working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr${chr} --peqtl-smr 0.02 --heidi-off --out /working/lab_nickm/dulariJ/SMR/Output/mysmr_chr${chr} 
+**********************SMR_Analysis***************************************
+for chr in {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22}; do ${smr_software} --bfile /working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.${chr}  --gwas-summary /working/lab_nickm/dulariJ/SMR/GWAS/mygwas.ma --beqtl-summary working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr${chr} --peqtl-smr 0.02 --heidi-off 
+--out /working/lab_nickm/dulariJ/SMR/Output/mysmr_chr${chr} ; done
+************************************
+###Drawing SMR Plot###
+${smr_software} --bfile /working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR --gwas-summary /working/lab_nickm/dulariJ/SMR/GWAS/PrCagwas.ma --beqtl-summary /mnt/backedup/home/dulariJ/LabData/ncRNA-eQTL/SMR_besd/PRAD_Cis --peqtl-smr 0.02 --out /mnt/backedup/home/dulariJ/LabData/ncRNA-eQTL/OUTPUT/PRAD_Cis
+##this will generate myplot.<probe_ID>.txt for plotting R data
+then you can draw plot using "plot_SMR.r" function
+source("plot_SMR.r")
+# Read the data file in R:
+SMRData = ReadSMRData("myplot.ILMN_123.txt")
+# Plot the SMR results in a genomic region centred around a probe:
+SMRLocusPlot(data=SMRData, smr_thresh=8.4e-6, heidi_thresh=0.05, plotWindow=1000, max_anno_probe=16)
+# smr_thresh: genome-wide significance level for the SMR test.
+# heidi_thresh: threshold for the HEIDI test. The default value is 0.05.
+# cis_wind: size of a window centred around the probe to select cis-eQTLs for plot. The default value is 2000Kb.
+# max_anno_probe: maximum number of probe names to be displayed on the figure. The default value is 16.
+
+*********************************************
+Reading GWAS summary data from [/working/lab_nickm/dulariJ/SMR/GWAS/mygwas.ma].
+GWAS summary data of 11363562 SNPs to be included from [/working/lab_nickm/dulariJ/SMR/GWAS/mygwas.ma].
+Reading eQTL SNP information from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.esi].
+WARNING: frequency is "NA" in one or more rows.
+2390 SNPs to be included from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.esi].
+Reading PLINK FAM file from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.fam].
+489 individuals to be included from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.fam].
+Reading PLINK BIM file from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.bim].
+99735 SNPs to be included from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.bim].
+Checking the consistency of the alleles of each SNP between pairwise data sets (including the GWAS summary data, the eQTL summary data and the LD reference data).
+489 SNPs are included after allele checking.
+Reading PLINK BED file from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.bed] in SNP-major format ...
+Genotype data for 489 individuals and 489 SNPs to be included from [/working/lab_nickm/dulariJ/SMR/LDREF/1000G.EUR.2.bed].
+Calculating allele frequencies ...
+Checking the consistency of allele frequency of each SNP between pairwise data sets (including the GWAS summary data, the eQTL summary data and the LD reference data).
+0 SNPs (0.00% <= 5.00%) with allele frequency differences > 0.20 between any pair of the data sets are excluded from the analysis.
+Reading eQTL summary data...
+Reading eQTL probe information from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.epi].
+34 Probes to be included from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.epi].
+Reading eQTL summary data from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.besd].
+eQTL summary data of 34 Probes to be included from [/working/lab_nickm/dulariJ/SMR/SMR_format/besd_chr2.besd].
+
+Performing SMR analysis (SMR and HEIDI tests) for 32 probes (with at least a cis-eQTL at p < 2.00e-02)...
+For each probe, the analysis will only include SNPs with eQTL p-values < 5.000000e-02,
+then exclude SNPs with LD r-squared between top-SNP > 0.90 or < 0.05, and further exclude one of each pair of the remaining SNPs with LD r-squared > 0.90.
+Results of 32 probes have been saved in file /working/lab_nickm/dulariJ/SMR/Output/mysmr_chr2.smr.
